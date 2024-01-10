@@ -1,0 +1,347 @@
+---
+output:
+  pdf_document:
+    keep_tex: false
+params:
+  partida: 1
+  medio: "AM"
+  especie: "Soja"
+  capacidad: 7
+  fechaAnalisis: !r Sys.Date()
+  fechaPartida: 
+  matriz: !r matrix(1:18, nrow = 3, ncol = 6)
+geometry: "left=1.27cm,right=1.27cm,top=1.5cm,bottom=1.27cm"
+header-includes:
+  - \usepackage{lipsum}
+  - \usepackage{multirow}
+  - \usepackage{fancyhdr}
+  - \usepackage{graphicx}
+---
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+## Creacion del data para el análisis a traves de los parametros de la app
+Analista <- c(rep("Analista 1", 6), rep("Analista 2", 6), rep("Analista 3", 6))
+Muestra <- c(rep(c("Media", "Alta"), 9))
+CRH <- c(rep(c(rep(paste0(params$capacidad-5, "%"), 2), rep(paste0(params$capacidad, "%"), 2), rep(paste0(params$capacidad+5, "%"), 2)), 3))
+PlNorm <- c(t(params$matriz)[, 1], t(params$matriz)[, 2], t(params$matriz)[, 3])
+
+## Datos de prueba para no depender de la app o bien si quiero renderizar solo este Rmd (comentar de ser necesario)
+PlNorm = c(77, 90, 81, 91, 69, 93, 80, 93, 74, 92, 67, 86, 81, 90, 83, 88, 73, 91)
+
+Datos <- as.data.frame(cbind(PlNorm, Analista, CRH, Muestra)) %>% 
+  mutate(PlNorm = as.numeric(PlNorm))
+
+
+## -----------------------------------------------------------------------------
+
+
+## Análisis estadísticos necesarios
+SHAPIRO.p <- shapiro.test(resid(aov(PlNorm ~ Muestra + Analista + CRH, data = Datos)) / sd(resid(aov(PlNorm ~ Muestra + Analista + CRH, data = Datos))))$p.value 
+BARTLETT.p <- bartlett.test(PlNorm ~ CRH, data = Datos)[["p.value"]]
+KRUSKALL.p <- kruskal.test(Datos$PlNorm, Datos$CRH)$p.value
+ANOVA.p <- summary(aov(PlNorm ~ Muestra + Analista + CRH, data = Datos))[[1]]$`Pr(>F)`[3]
+MEDIANS <- aggregate(PlNorm ~ CRH, data = Datos, FUN = mean)
+MEDIAN.max <- MEDIANS$CRH[MEDIANS$PlNorm == max(MEDIANS$PlNorm)]
+
+
+## -----------------------------------------------------------------------------
+
+
+## Loop para imprimir soluciones
+
+# Si se cumplen los supuestos para el ANOVA
+if(SHAPIRO.p > .05 && BARTLETT.p > .05) {
+  
+  # No hay diferencias significativas -> Elijo el de mayor mediana
+  if(KRUSKALL.p > .05 && ANOVA.p > .05) {
+    
+    # Tengo que considerar los casos en que las medianas coincidan
+    if(nchar(MEDIAN.max) == 1) {
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos no difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). Considerando ahora además la variabilidad asociada a las muestras y a los analistas, los porcentajes de plántulas normales medios tampoco difieren según el porcentaje de CRH utilizado (p = ", round(ANOVA.p, 3), "). Se recomienda utilizar una CRH de ", MEDIAN.max, "% porque es la que provocó un porcentaje de plántulas normales mediano mayor.")
+    }
+    else if(nchar(MEDIAN.max) == 2) {
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos no difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). Considerando ahora además la variabilidad asociada a las muestras y a los analistas, los porcentajes de plántulas normales medios tampoco difieren según el porcentaje de CRH utilizado (p = ", round(ANOVA.p, 3), "). Se recomienda utilizar una CRH de ", MEDIAN.max[1], "% o de ", MEDIAN.max[1],"%  porque son las que provocaron un porcentaje de plántulas normales mediano mayor.")
+    }
+    else {
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos no difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). Considerando ahora además la variabilidad asociada a las muestras y a los analistas, los porcentajes de plántulas normales medios tampoco difieren según el porcentaje de CRH utilizado (p = ", round(ANOVA.p, 3), "). Como las tres capacidades provocaron el mismo porcentaje de plántulas normales mediano, los resultados son iguales y cualquiera de las tres puede elegirse.")
+    }
+    
+  # Hay diferencia en las medianas pero no en las medias -> Concluyo en funcion del test de DUNN
+  } else if (KRUSKALL.p < .05 && ANOVA.p > .05) {
+    
+      # Loop para encontrar el o los mejores
+      DUNN <- dunn.test(Datos$PlNorm, Datos$CRH, method = "bh", altp = T)
+      mejor.DUNN <- character()
+      for (i in 1:3) {
+        if (DUNN[["altP.adjusted"]][i] < .05) {
+          if (DUNN[["Z"]][i] > 0) {
+            mejor.DUNN <- c(mejor.DUNN, str_split_i(DUNN[["comparisons"]][i], " ", 1))
+          } else {
+            mejor.DUNN <- c(mejor.DUNN, str_split_i(DUNN[["comparisons"]][i], " ", 3))
+          }
+        }
+      }
+      
+      # Loop para que imprima correctamente segun si hay uno o dos mejores
+      if (length(mejor.DUNN) == 2) {
+        if(mejor.DUNN[1] == mejor.DUNN[2]) {
+          mejor.DUNN <- paste0(mejor.DUNN[1], " porque es la que provocó")
+        } else {
+          mejor.DUNN <- paste0(mejor.DUNN[1], " o ", mejor.DUNN[2], " porque son las que provocaron")
+        }
+      } else if (length(mejor.DUNN) == 3) {
+        if(mejor.DUNN[1] == mejor.DUNN[2]) {
+          mejor.DUNN <- mejor.DUNN[1]
+        } else if(mejor.DUNN[1] == mejor.DUNN[3]) {
+          mejor.DUNN <- mejor.DUNN[1]
+        } else if(mejor.DUNN[2] == mejor.DUNN[3]) {
+          mejor.DUNN <- mejor.DUNN[2]
+        }
+      } else {
+        mejor.DUNN <- mejor.DUNN
+      }
+      
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). Sin embargo, considerando la variabilidad asociada a las muestras y a los analistas, los porcentajes de plántulas normales medios no difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). Se recomienda utilizar una CRH de ", mejor.DUNN, " un porcentaje de plántulas normales mediano estadísticamente mayor.")
+    
+  # Hay diferencia en las medias pero no en las medianas -> Concluyo en funcion del test de TUKEY
+  } else if (KRUSKALL.p > .05 && ANOVA.p < .05) {
+    
+      # Loop para encontrar el o los mejores
+      TUKEY <- emmeans(aov(PlNorm ~ Muestra + CRH, data = Datos), pairwise ~ CRH, adjust = "tukey")
+      mejor.TUKEY <- character()
+      for (i in 1:3) {
+        if (summary(TUKEY)$contrasts$p.value[i] < .05) {
+          if (summary(TUKEY)$contrasts$estimate[i] > 0) {
+            mejor.TUKEY <- c(mejor.TUKEY, str_split_i(TUKEY[["contrasts"]]@levels[["contrast"]][i], " ", 1))
+          } else {
+          mejor.TUKEY <- c(mejor.TUKEY, str_split_i(TUKEY[["contrasts"]]@levels[["contrast"]][i], " ", 3))
+          }
+        }
+      }
+      
+      # Loop para que imprima correctamente segun si hay uno o dos mejores
+      if (length(mejor.TUKEY) == 2) {
+        if(mejor.TUKEY[1] == mejor.TUKEY[2]) {
+          mejor.TUKEY <- paste0(mejor.TUKEY[1], " porque es la que provocó")
+        } else {
+          mejor.TUKEY <- paste0(mejor.TUKEY[1], " o ", mejor.TUKEY[2], " porque son las que provocaron")
+        }
+      } else if (length(mejor.TUKEY) == 3) {
+        if(mejor.TUKEY[1] == mejor.TUKEY[2]) {
+          mejor.TUKEY <- mejor.TUKEY[1]
+        } else if(mejor.TUKEY[1] == mejor.TUKEY[3]) {
+          mejor.TUKEY <- mejor.TUKEY[1]
+        } else if(mejor.TUKEY[2] == mejor.TUKEY[3]) {
+          mejor.TUKEY <- mejor.TUKEY[2]
+        }
+      } else {
+          mejor.TUKEY <- mejor.TUKEY
+        }
+      
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos no difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). Sin embargo, considerando la variabilidad asociada a las muestras y a los analistas, los porcentajes de plántulas normales medios sí difieren según el porcentaje de CRH utilizado (p = ", round(ANOVA.p, 3), "). Se recomienda utilizar una CRH de ", mejor.TUKEY, " un porcentaje de plántulas normales medio estadísticamente mayor.")
+    
+  # Hay diferencia en las medias y en las medianas -> Concluyo en funcion del test de TUKEY    
+  } else {
+    
+      # Loop para encontrar el o los mejores
+      TUKEY <- emmeans(aov(PlNorm ~ Muestra + CRH, data = Datos), pairwise ~ CRH, adjust = "tukey")
+      mejor.TUKEY <- character()
+      for (i in 1:3) {
+        if (summary(TUKEY)$contrasts$p.value[i] < .05) {
+          if (summary(TUKEY)$contrasts$estimate[i] > 0) {
+            mejor.TUKEY <- c(mejor.TUKEY, str_split_i(TUKEY[["contrasts"]]@levels[["contrast"]][i], " ", 1))
+          } else {
+          mejor.TUKEY <- c(mejor.TUKEY, str_split_i(TUKEY[["contrasts"]]@levels[["contrast"]][i], " ", 3))
+          }
+        }
+      }
+      
+      # Loop para que imprima correctamente segun si hay uno o dos mejores
+      if (length(mejor.TUKEY) == 2) {
+        if(mejor.TUKEY[1] == mejor.TUKEY[2]) {
+          mejor.TUKEY <- paste0(mejor.TUKEY[1], " porque es la que provocó")
+        } else {
+          mejor.TUKEY <- paste0(mejor.TUKEY[1], " o ", mejor.TUKEY[2], " porque son las que provocaron")
+        }
+      } else if (length(mejor.TUKEY) == 3) {
+        if(mejor.TUKEY[1] == mejor.TUKEY[2]) {
+          mejor.TUKEY <- mejor.TUKEY[1]
+        } else if(mejor.TUKEY[1] == mejor.TUKEY[3]) {
+          mejor.TUKEY <- mejor.TUKEY[1]
+        } else if(mejor.TUKEY[2] == mejor.TUKEY[3]) {
+          mejor.TUKEY <- mejor.TUKEY[2]
+        }
+      } else {
+          mejor.TUKEY <- mejor.TUKEY
+        }
+    
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). Además, considerando la variabilidad asociada a las muestras y a los analistas, los porcentajes de plántulas normales medios también difieren según el porcentaje de CRH utilizado (p = ", round(ANOVA.p, 3), "). Se recomienda utilizar una CRH de ", mejor.TUKEY, " un porcentaje de plántulas normales medio estadísticamente mayor.")
+  
+  }
+  
+# Si no se cumplen los supuestos para el ANOVA
+} else {
+  
+  # No hay diferencias significativas -> Elijo el de mayor mediana
+  if(KRUSKALL.p > .05) {
+    
+    # Tengo que considerar los casos en que las medianas coincidan
+    if(nchar(MEDIAN.max) == 1) {
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos no difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). El test ANOVA para comprar los porcentajes de plántulas normales medio no puede realizarse porque no se verifican los supuestos necesarios. Se recomienda utilizar una CRH de ", MEDIAN.max, "% porque es la que provocó un porcentaje de plántulas normales mediano mayor.")
+    }
+    else if(nchar(MEDIAN.max) == 2) {
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos no difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). El test ANOVA para comprar los porcentajes de plántulas normales medio no puede realizarse porque no se verifican los supuestos necesarios. Se recomienda utilizar una CRH de ", MEDIAN.max[1], "% o de ", MEDIAN.max[1],"%  porque son las que provocaron un porcentaje de plántulas normales mediano mayor.")
+    }
+    else {
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos no difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). El test ANOVA para comprar los porcentajes de plántulas normales medio no puede realizarse porque no se verifican los supuestos necesarios. Como las tres capacidades provocaron el mismo porcentaje de plántulas normales mediano, los resultados son iguales y cualquiera de los tres puede elegirse.")
+    }
+    
+  # Hay diferencias significativas -> Concluyo en funcion del test de DUNN
+  } else {
+
+      # Loop para encontrar el o los mejores
+      DUNN <- dunn.test(Datos$PlNorm, Datos$CRH, method = "bh", altp = T)
+      mejor.DUNN <- character()
+      for (i in 1:3) {
+        if (DUNN[["altP.adjusted"]][i] < .05) {
+          if (DUNN[["Z"]][i] > 0) {
+            mejor.DUNN <- c(mejor.DUNN, str_split_i(DUNN[["comparisons"]][i], " ", 1))
+          } else {
+            mejor.DUNN <- c(mejor.DUNN, str_split_i(DUNN[["comparisons"]][i], " ", 3))
+          }
+        }
+      }
+      
+      # Loop para que imprima correctamente segun si hay uno o dos mejores
+      if (length(mejor.DUNN) == 2) {
+        if(mejor.DUNN[1] == mejor.DUNN[2]) {
+          mejor.DUNN <- paste0(mejor.DUNN[1], " porque es la que provocó")
+        } else {
+          mejor.DUNN <- paste0(mejor.DUNN[1], " o ", mejor.DUNN[2], " porque son las que provocaron")
+        }
+      } else if (length(mejor.DUNN) == 3) {
+        if(mejor.DUNN[1] == mejor.DUNN[2]) {
+          mejor.DUNN <- mejor.DUNN[1]
+        } else if(mejor.DUNN[1] == mejor.DUNN[3]) {
+          mejor.DUNN <- mejor.DUNN[1]
+        } else if(mejor.DUNN[2] == mejor.DUNN[3]) {
+          mejor.DUNN <- mejor.DUNN[2]
+        }
+      } else {
+        mejor.DUNN <- mejor.DUNN
+      }
+      
+      resultado <- paste0("En base a la evidencia muestral, los porcentajes de plántulas normales medianos difieren según el porcentaje de CRH utilizado (p = ", round(KRUSKALL.p, 3), "). El test ANOVA para comprar los porcentajes de plántulas normales medio no puede realizarse porque no se verifican los supuestos necesarios. Se recomienda utilizar una CRH de ", mejor.DUNN, " un porcentaje de plántulas normales mediano estadísticamente mayor.")
+  }
+}
+
+
+## -----------------------------------------------------------------------------
+
+
+## Boxplot comparativo de los 3 % de CRH
+png("plot.png", height=350, width=600)
+    
+Datos %>% 
+  mutate(CRH = factor(CRH, labels = c(paste0(params$capacidad-5, "%"), paste0(params$capacidad, "%"), paste0(params$capacidad+5, "%")))) %>% # Ordeno la categoría CRH (si CRH media es <15% queda desordenado)
+  ggplot(aes(x=CRH, y=as.numeric(PlNorm))) +
+  geom_boxplot(aes(fill = CRH), size = 1) +
+  scale_fill_manual(values = c("#ff8100", "#004691", "#65666a")) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+  xlab("CRH") + ylab("PN") +
+  theme_hc() +
+  theme(title = element_text(size = , hjust = 0.5),
+        axis.text = element_text(size = 25, color = "black"),
+        axis.ticks.x = element_blank(),
+        axis.title = element_text(size = 30),
+        axis.line.y = element_line(),
+        legend.position = "none",
+        panel.background = element_blank(),
+        panel.margin = unit(0.5, "lines"),  # Ajusta los márgenes del panel
+        plot.margin = unit(c(1, 1, 0.5, 0.5), "lines"))
+
+dev.off()
+```
+
+<!-- Justificar texto -->
+<style> body {text-align: justify} </style>
+
+
+<!-- Header con imagen de Rayen y pagina sin número -->
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\setlength\headheight{50.0pt}
+\chead{\includegraphics{Rayen_header.png}}
+
+<!-- Cuerpo del informe -->
+\begin{flushright}
+\large
+Pergamino, `r format(params$fechaAnalisis, "%d")` de `r format(params$fechaAnalisis, "%B")` de `r format(params$fechaAnalisis, "%Y")`
+\end{flushright}
+
+\begin{center}
+
+\LARGE \textbf{Porcentaje de la CRH a utilizar en la partida `r params$partida` para `r if(str_split_i(params$especie, " ", 2) == "sp.") paste0("\\textit{", str_split_i(params$especie, " ", 1), "}", " sp.") else paste0("\\textit{", params$especie, "}")` ingresada en `r format(params$fechaPartida, "%B")` de `r format(params$fechaPartida, "%Y")`}
+\end{center}
+
+
+\Large
+\textbf{Introducción}
+
+\normalsize
+Según lo establecido en el PTD05, se realizaron ensayos para la elaboración de la evidencia objetiva, cuyo objetivo es controlar el porcentaje de capacidad de retención hídrica (CRH) a utilizar en la partida `r params$partida` para `r if(str_split_i(params$especie, " ", 2) == "sp.") paste0("\\textit{", str_split_i(params$especie, " ", 1), "}", " sp.") else paste0("\\textit{", params$especie, "}")` ingresada en `r format(params$fechaPartida, "%B")` de `r format(params$fechaPartida, "%Y")`. Este consistió en un análisis de poder germinativo (PG) sobre dos muestras de calidades media y alta, para tres niveles de capacidad de retención hídrica: `r params$capacidad` $\pm$ 5%. En cada una de las 6 combinaciones de muestra y CRH se obtuvieron 3 repeticiones de 100 semillas y se evaluó el porcentaje de poder germinativo resultante. Cada repetición fue analizada por un analista distinto del laboratorio. Se obtuvieron un total de 18 registros.
+
+
+El análisis estadístico consistió en primera instancia en una comparación de medianas, a través del test de Kruskal-Wallis, para los tres niveles de CRH. Posteriormente, se llevó a cabo un ANOVA considerando tanto la fuente de variación asociada a la CRH como la variabilidad asociada a la muestra y al analista. Luego, en el caso de que alguno de los test fuera significativo, se llevó a cabo una prueba *pos hoc* para comparar los porcentajes de CRH de a pares y así elegir el más conveniente. La prueba posterior al test de Kruskall-Wallis fue el test de Dunn y la posterior al ANOVA fue el test de Tukey. 
+
+
+Los supuestos  de normalidad y homocedasticidad, necesarios para que los resultados del ANOVA sean válidos, fueron realizados mediante el test de Shapiro-Wilk y el test de Bartlett respectivamente. Para evitar sesgos, se llevó a cabo una aleatorización en el orden de las pruebas y se consideró un diseño ciego para los analistas. El nivel de significación utilizado fue del 5%. El análisis fue llevado a cabo en el software estadístico R (versión `r gsub("R version | \\(.*\\)", "", R.version$version.string)`).
+
+
+Los resultados estadísticos se compararon con los criterios visuales de los analistas del laboratorio respecto de las muestras durante la evaluación para tomar la decisión de qué porcentaje de CRH utilizar para esta partida.
+
+
+\vspace{.25cm}
+
+\Large \textbf{Resultados}
+\normalsize
+
+\begin{minipage}{\textwidth}
+  \begin{minipage}[!h]{0.49\textwidth}
+    \centering
+    \setlength{\tabcolsep}{15pt}
+    \renewcommand{\arraystretch}{1.5}
+    \begin{tabular}{c c c c c}
+    \multirow{2}{*}{Calidad} & \multirow{2}{*}{\% CRH} & \multicolumn{3}{c}{Analista} \\
+    \cline{3-5}
+     &   &   1   &   2   &   3   \\
+    \hline 
+    \multirow{3}{*}{Media}    &   `r params$capacidad-5`    &   `r Datos$PlNorm[1]`   &   `r Datos$PlNorm[7]`   &   `r Datos$PlNorm[13]` \\
+      &   `r params$capacidad`    &   `r Datos$PlNorm[2]`   &   `r Datos$PlNorm[8]`   &   `r Datos$PlNorm[14]` \\
+      &   `r params$capacidad+5`    &   `r Datos$PlNorm[3]`   &   `r Datos$PlNorm[9]`   &   `r Datos$PlNorm[15]` \\
+    \hline
+    \multirow{3}{*}{Alta}   &   `r params$capacidad-5`      &   `r Datos$PlNorm[4]`   &   `r Datos$PlNorm[10]`   &   `r Datos$PlNorm[16]` \\
+      &   `r params$capacidad`    &   `r Datos$PlNorm[5]`   &   `r Datos$PlNorm[11]`  &   `r Datos$PlNorm[17]`   \\
+      &   `r params$capacidad+5`  &   `r Datos$PlNorm[6]`   &   `r Datos$PlNorm[12]`  &   `r Datos$PlNorm[18]`
+    \end{tabular}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[!h]{0.49\textwidth}
+    \includegraphics[width=\linewidth]{plot.png}
+  \end{minipage}
+\end{minipage}
+
+`r resultado`
+
+\vspace{.25cm}
+
+\Large \textbf{Conclusión}
+\normalsize
+
+Considerando conjuntamente los resultados estadísticos y la observación de los analistas, el porcentaje de capacidad de retención hídrica a utilizar en la partida `r params$partida` para `r if(str_split_i(params$especie, " ", 2) == "sp.") paste0("\\textit{", str_split_i(params$especie, " ", 1), "}", " sp.") else paste0("\\textit{", params$especie, "}")` es del .... \% .
+
